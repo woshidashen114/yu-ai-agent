@@ -27,7 +27,7 @@
         <url/>
     </scm>
     <properties>
-        <java.version>21</java.version>
+        <java.version>17</java.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -138,7 +138,8 @@
             <groupId>com.itextpdf</groupId>
             <artifactId>font-asian</artifactId>
             <version>9.1.0</version>
-            <scope>test</scope>
+            <!-- Make font-asian available at runtime so built-in CJK fonts like STSongStd-Light are recognized -->
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>cn.hutool</groupId>

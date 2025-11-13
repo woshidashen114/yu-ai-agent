@@ -6,5 +6,5 @@ package com.yupi.yuaiagent.demo.invoke;
 public interface TestApiKey {
 
     // 修改为你的 API Key
-    String API_KEY = "修改为你的 API Key";
+    String API_KEY = "sk-73385dcd994a4601bb012c49d63521a8";
 }

@@ -14,11 +14,11 @@ public class YuImageSearchMcpServerApplication {
         SpringApplication.run(YuImageSearchMcpServerApplication.class, args);
     }
 
-    @Bean
-    public ToolCallbackProvider imageSearchTools(ImageSearchTool imageSearchTool) {
-        return MethodToolCallbackProvider.builder()
-                .toolObjects(imageSearchTool)
-                .build();
-    }
+    // @Bean
+    // public ToolCallbackProvider imageSearchTools(ImageSearchTool imageSearchTool) {
+    //     return MethodToolCallbackProvider.builder()
+    //             .toolObjects(imageSearchTool)
+    //             .build();
+    // }
 
 }

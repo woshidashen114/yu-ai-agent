@@ -14,6 +14,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 @RestController
 @RequestMapping("/ai")
@@ -79,14 +81,38 @@ public class AiController {
         // 创建一个超时时间较长的 SseEmitter
         SseEmitter sseEmitter = new SseEmitter(180000L); // 3 分钟超时
         // 获取 Flux 响应式数据流并且直接通过订阅推送给 SseEmitter
+        // 使用标志避免重复完成 emitter
+        AtomicBoolean sseCompleted = new AtomicBoolean(false);
+        Consumer<Throwable> safeCompleteWithError = ex -> {
+            try {
+                if (sseCompleted.compareAndSet(false, true)) {
+                    sseEmitter.completeWithError(ex);
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+        };
+        Runnable safeComplete = () -> {
+            try {
+                if (sseCompleted.compareAndSet(false, true)) {
+                    sseEmitter.complete();
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+        };
+
         loveApp.doChatByStream(message, chatId)
                 .subscribe(chunk -> {
                     try {
                         sseEmitter.send(chunk);
-                    } catch (IOException e) {
-                        sseEmitter.completeWithError(e);
+                    } catch (IOException ioe) {
+                        safeCompleteWithError.accept(ioe);
+                    } catch (IllegalStateException ise) {
+                        // emitter 已完成，忽略后续数据
+                        // 也可以记录日志
                     }
-                }, sseEmitter::completeWithError, sseEmitter::complete);
+                }, ex -> safeCompleteWithError.accept(ex), () -> safeComplete.run());
         // 返回
         return sseEmitter;
     }

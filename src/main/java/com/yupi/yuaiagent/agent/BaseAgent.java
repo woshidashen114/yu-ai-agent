@@ -13,6 +13,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * 抽象基础代理类，用于管理代理状态和执行流程。
@@ -100,22 +102,51 @@ public abstract class BaseAgent {
     public SseEmitter runStream(String userPrompt) {
         // 创建一个超时时间较长的 SseEmitter
         SseEmitter sseEmitter = new SseEmitter(300000L); // 5 分钟超时
+        // 标记 emitter 是否已完成，避免重复 complete/completeWithError 导致 IllegalStateException
+        AtomicBoolean sseCompleted = new AtomicBoolean(false);
+        Consumer<Throwable> safeCompleteWithError = (ex) -> {
+            try {
+                if (sseCompleted.compareAndSet(false, true)) {
+                    sseEmitter.completeWithError(ex);
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+        };
+        Runnable safeComplete = () -> {
+            try {
+                if (sseCompleted.compareAndSet(false, true)) {
+                    sseEmitter.complete();
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+        };
         // 使用线程异步处理，避免阻塞主线程
-        CompletableFuture.runAsync(() -> {
+    CompletableFuture.runAsync(() -> {
             // 1、基础校验
             try {
                 if (this.state != AgentState.IDLE) {
-                    sseEmitter.send("错误：无法从状态运行代理：" + this.state);
-                    sseEmitter.complete();
+                    try {
+                        sseEmitter.send("错误：无法从状态运行代理：" + this.state);
+                    } catch (IOException | IllegalStateException ignore) {
+                        // ignore send errors
+                    }
+                    safeComplete.run();
                     return;
                 }
                 if (StrUtil.isBlank(userPrompt)) {
-                    sseEmitter.send("错误：不能使用空提示词运行代理");
-                    sseEmitter.complete();
+                    try {
+                        sseEmitter.send("错误：不能使用空提示词运行代理");
+                    } catch (IOException | IllegalStateException ignore) {
+                        // ignore send errors
+                    }
+                    safeComplete.run();
                     return;
                 }
             } catch (Exception e) {
-                sseEmitter.completeWithError(e);
+                safeCompleteWithError.accept(e);
+                return;
             }
             // 2、执行，更改状态
             this.state = AgentState.RUNNING;
@@ -133,25 +164,43 @@ public abstract class BaseAgent {
                     String stepResult = step();
                     String result = "Step " + stepNumber + ": " + stepResult;
                     results.add(result);
-                    // 输出当前每一步的结果到 SSE
-                    sseEmitter.send(result);
+                    // 输出当前每一步的结果到 SSE（保护性处理，忽略已关闭的连接）
+                    try {
+                        sseEmitter.send(result);
+                    } catch (IOException ioe) {
+                        // 发送失败，记录并终止流
+                        log.warn("Failed to send SSE chunk: {}", ioe.getMessage());
+                        safeCompleteWithError.accept(ioe);
+                        break;
+                    } catch (IllegalStateException ise) {
+                        // emitter 已完成/取消，避免重复完成操作
+                        log.warn("SSE emitter already completed: {}", ise.getMessage());
+                        break;
+                    }
                 }
                 // 检查是否超出步骤限制
                 if (currentStep >= maxSteps) {
                     state = AgentState.FINISHED;
                     results.add("Terminated: Reached max steps (" + maxSteps + ")");
-                    sseEmitter.send("执行结束：达到最大步骤（" + maxSteps + "）");
+                    try {
+                        sseEmitter.send("执行结束：达到最大步骤（" + maxSteps + "）");
+                    } catch (IOException | IllegalStateException ignore) {
+                        // ignore
+                    }
                 }
                 // 正常完成
-                sseEmitter.complete();
+                safeComplete.run();
             } catch (Exception e) {
                 state = AgentState.ERROR;
                 log.error("error executing agent", e);
                 try {
-                    sseEmitter.send("执行错误：" + e.getMessage());
-                    sseEmitter.complete();
-                } catch (IOException ex) {
-                    sseEmitter.completeWithError(ex);
+                    try {
+                        sseEmitter.send("执行错误：" + e.getMessage());
+                    } catch (IOException | IllegalStateException ignore) {
+                        // ignore
+                    }
+                } finally {
+                    safeComplete.run();
                 }
             } finally {
                 // 3、清理资源
@@ -163,6 +212,7 @@ public abstract class BaseAgent {
         sseEmitter.onTimeout(() -> {
             this.state = AgentState.ERROR;
             this.cleanup();
+            safeComplete.run();
             log.warn("SSE connection timeout");
         });
         // 设置完成回调
@@ -171,6 +221,8 @@ public abstract class BaseAgent {
                 this.state = AgentState.FINISHED;
             }
             this.cleanup();
+            // 标记已完成（如果尚未标记）
+            sseCompleted.compareAndSet(false, true);
             log.info("SSE connection completed");
         });
         return sseEmitter;

@@ -15,8 +15,15 @@ public class ToolRegistration {
     @Value("${search-api.api-key}")
     private String searchApiKey;
 
+    @Value("${spring.ai.dashscope.api-key}")
+    private String dashScopeApiKey;
+
+    @Value("${spring.ai.dashscope.appid}")
+    private String dashScopeAppId;
+
     @Bean
     public ToolCallback[] allTools() {
+        genaratorImg genaratorImg = new genaratorImg(dashScopeApiKey,dashScopeAppId);
         FileOperationTool fileOperationTool = new FileOperationTool();
         WebSearchTool webSearchTool = new WebSearchTool(searchApiKey);
         WebScrapingTool webScrapingTool = new WebScrapingTool();
@@ -31,6 +38,7 @@ public class ToolRegistration {
                 resourceDownloadTool,
                 terminalOperationTool,
                 pdfGenerationTool,
+                genaratorImg,
                 terminateTool
         );
     }
